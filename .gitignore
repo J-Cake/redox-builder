@@ -1,0 +1,7 @@
+/target
+/build
+/.fleet
+/.idea
+/.zed
+/.vscode
+/vm-mounts

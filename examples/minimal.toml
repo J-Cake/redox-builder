@@ -1,0 +1,46 @@
+name = "Minimal"
+description = """A simple bare-bones image containing not much more than barely necessary to work as an OS."""
+requires = [
+    "components/core",
+    #    "components/dev",
+    #    "components/gui",
+    #    "components/libs",
+    #    "components/net",
+    #    "components/other"
+]
+
+[[component]]
+name = "bootloader"
+requires = ["git://gitlab.redox-os.org/redox-os/bootloader.git"]
+yields = ["bootloader.efi"]
+# Each component receives a temporary directory where the dependencies are copied / downloaded into.
+# Each `yields` member is relative to this directory.
+# The builder will fail if it cannot find the specified resource.
+
+shell = """
+
+"""
+
+[image]
+label = "Redox OS - Minimal"
+size = 16_384                # Size is in megabytes
+format = "qcow2"
+
+[[image.partition]]
+requires = ["bootloader"]
+label = "EFI"
+size = 165
+filesystem = "fat32"
+
+[[file]]
+path = "/"
+
+[[image.partition]]
+requires = ["kernel", "initfs", "bootstrap", "userspace"]
+label = "/"
+size = -1                                                 # Use negative size to indicate remaining space
+filesystem = "redoxfs"
+
+[[file]]
+path = "/etc/redox-release"
+text = "0.8.0"
