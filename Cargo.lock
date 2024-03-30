@@ -628,6 +628,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "702fc72eb24e5a1e48ce58027a675bc24edd52096d5397d4aea7c6dd9eca0bd1"
 
 [[package]]
+name = "cli"
+version = "0.1.0"
+
+[[package]]
 name = "clipboard-win"
 version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -705,6 +709,10 @@ checksum = "ec182b0ca2f35d8fc196cf3404988fd8b8c739a4d270ff118a398feb0cbec1ca"
 dependencies = [
  "unicode-segmentation",
 ]
+
+[[package]]
+name = "core"
+version = "0.1.0"
 
 [[package]]
 name = "core-foundation"
@@ -1419,6 +1427,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "img"
+version = "0.1.0"
+
+[[package]]
 name = "indexmap"
 version = "2.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1622,8 +1634,6 @@ dependencies = [
 [[package]]
 name = "libparted"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3e3f767bdcb00e4fec15206d7c588b62cd1dbc4e36e1e90af1171baf87610ef"
 dependencies = [
  "libc",
  "libparted-sys",

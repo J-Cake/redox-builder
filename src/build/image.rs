@@ -1,6 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use log::warn;
+use libparted::Constraint;
+use libparted::Disk;
+use libparted::FileSystemType;
+use libparted::Geometry;
+use libparted::Partition;
+use libparted::PartitionTableType;
+use libparted::PartitionType;
+use log::{debug, warn};
 use tokio::net::UnixStream;
 use tokio::process::Command;
 
@@ -72,8 +79,6 @@ impl<'a> DiskManager<'a> {
 
     #[cfg(feature = "qemu")]
     pub async fn mount(&mut self) -> Result<()> {
-        use log::debug;
-
         let monitor = self
             .backing
             .parent()
@@ -172,8 +177,6 @@ impl<'a> DiskManager<'a> {
 
     #[cfg(feature = "qemu")]
     pub async fn unmount(self) -> Result<()> {
-        use log::debug;
-
         if let Some(mut socket) = self.qmp {
             debug!("Killing Storage Daemon");
             DiskManager::qmp_send_message(&mut socket, DiskManager::qmp_quit()).await?;
@@ -193,6 +196,53 @@ impl<'a> DiskManager<'a> {
         let mut dev = libparted::Device::new(&self.backing)?;
         dev.open()?;
 
+        // libparted::
+
+        // let align = dev.get_minimal_aligned_constraint()?;
+
+        let total = self.image.size * 1024i64.pow(2) / dev.sector_size() as i64;
+        let partitions = self
+            .image
+            .partitions
+            .iter()
+            .scan(total, |remaining, partition| {
+                let start = total - *remaining;
+                let len = match partition.size * 1024i64.pow(2) / dev.sector_size() as i64 {
+                    x if x < 0 => *remaining - x.abs(),
+                    x => x,
+                };
+
+                *remaining = *remaining - len;
+                Some(Geometry::new(&dev, start, len).map_err(Error::from))
+            })
+            .collect::<Result<Vec<Geometry>>>()?;
+
+        let mut disk = Disk::new_with_partition_table(&mut dev, PartitionTableType::GPT)?;
+
+        for (geometry, partition) in partitions.into_iter().zip(self.image.partitions.iter()) {
+            let fs = partition
+                .filesystem
+                .as_ref()
+                .and_then(|fs| FileSystemType::get(fs.as_ref()));
+
+            debug!("Found Filesystem: {}", fs.is_some());
+
+            let mut real_partition = Partition::new(
+                &disk,
+                PartitionType::PED_PARTITION_NORMAL,
+                fs.as_ref(),
+                geometry.start(),
+                geometry.end(),
+            )?;
+
+            real_partition.set_name(&partition.label)?;
+
+            let constraint = Constraint::new_from_max(&geometry)?;
+
+            disk.add_partition(&mut real_partition, &constraint)?;
+        }
+
+        disk.commit()?;
         Ok(())
     }
 

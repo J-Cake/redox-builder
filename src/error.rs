@@ -69,6 +69,7 @@ pub enum BuildError {
     FailedToCreateImage,
     #[cfg(feature = "qemu")]
     QmpQuitFail,
+    InvalidDiskType,
 }
 
 impl std::error::Error for BuildError {}
