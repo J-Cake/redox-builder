@@ -64,7 +64,7 @@ pub enum BuildError {
     DuplicateComponentName(String),
     ReferenceDropped, // Happens when the upgrade of a weak pointer fails. Shouldn't ever come up, but handle it anyway
     InvalidBuildDir(std::path::PathBuf),
-    FailedDependency(std::sync::Arc<tokio::sync::RwLock<crate::build::DependencyTree>>),
+    FailedDependency(String),
     LoopError,
     FailedToCreateImage,
     #[cfg(feature = "qemu")]

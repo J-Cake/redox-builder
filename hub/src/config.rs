@@ -1,5 +1,7 @@
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigFile {
@@ -8,7 +10,7 @@ pub struct ConfigFile {
 
     #[serde(default)]
     pub requires: Vec<PathBuf>,
-    pub image: ImageConfig,
+    pub image: Arc<ImageConfig>,
     #[serde(default, rename = "component")]
     pub components: Vec<Component>,
 }

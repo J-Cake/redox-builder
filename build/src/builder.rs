@@ -1,16 +1,18 @@
-use crate::build::config::BuildMode;
-use crate::build::config::Partition;
-use crate::build::BuildStatus;
-use crate::build::DependencyTree;
-use crate::error::*;
-use async_recursion::async_recursion;
-use log::{debug, info};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use async_recursion::async_recursion;
+use log::{debug, info};
 use tokio::process::Command;
 use tokio::sync::RwLock;
 use tokio::task::JoinError;
+
+use hub::config::BuildMode;
+use hub::config::Partition;
+use hub::error::*;
+
+use crate::{BuildStatus, DependencyTree};
 
 pub async fn build_partition<'a>(
     partition: Arc<Partition>,
@@ -24,7 +26,7 @@ pub async fn build_partition<'a>(
             .values()
             .map(|component| tokio::spawn(build_component(Arc::clone(component)))),
     )
-    .await;
+        .await;
 
     debug!("Built dependencies for partition '{}'", &partition.label);
 
@@ -51,9 +53,9 @@ pub async fn build_component(component: Arc<RwLock<DependencyTree>>) -> Result<A
                             .iter()
                             .map(|component| tokio::spawn(build_component(Arc::clone(component)))),
                     )
-                    .await
-                    .into_iter()
-                    .collect::<std::result::Result<Result<Box<[ArtifactList]>>, JoinError>>()??,
+                        .await
+                        .into_iter()
+                        .collect::<std::result::Result<Result<Box<[ArtifactList]>>, JoinError>>()??,
                 };
 
                 let build = (match &component.component.build_mode {
@@ -68,8 +70,8 @@ pub async fn build_component(component: Arc<RwLock<DependencyTree>>) -> Result<A
                         // TODO: Pass environment and set CWD
                         .spawn()?,
                 })
-                .wait()
-                .await?;
+                    .wait()
+                    .await?;
 
                 component.status = BuildStatus::Success(ArtifactList {
                     component: component.component.name.clone(),
@@ -81,7 +83,7 @@ pub async fn build_component(component: Arc<RwLock<DependencyTree>>) -> Result<A
             BuildStatus::InProgress => continue,
             BuildStatus::Success(artifact_list) => Ok(artifact_list.clone()),
             BuildStatus::Failure => {
-                Err(BuildError::FailedDependency(Arc::clone(&component)).into())
+                Err(BuildError::FailedDependency(component.read().await.component.name.clone()).into())
             }
         };
     }

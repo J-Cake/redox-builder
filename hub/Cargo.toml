@@ -1,0 +1,18 @@
+[package]
+name = "hub"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["qemu"]
+qemu = []
+
+[dependencies]
+serde = { version = "1.0.195", features = ["derive", "rc"] }
+tokio = { version = "1.35.1", features = ["full"] }
+toml = { version = "0.8.8", features = ["parse"] }
+serde_json = "1.0.115"
+anyhow = "1.0.81"
+crossbeam = "0.8.4"
+clap = "4.5.4"
+backtrace = "0.3.71"

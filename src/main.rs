@@ -1,17 +1,12 @@
-pub mod build;
-pub mod checkout;
-pub mod error;
-pub mod reporter;
-
-use clap::{Parser, Subcommand};
 use std::env;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use clap::{Parser, Subcommand};
+use build::build;
+use checkout::checkout;
 
-use crate::build::build;
-use crate::checkout::checkout;
-pub use crate::error::*;
-use crate::reporter::{ReportMode, Reporter};
+use hub::error::*;
+use hub::reporter::*;
 
 #[derive(Debug, Parser)]
 #[clap(version, about)]
@@ -72,7 +67,7 @@ pub async fn main() -> Result<()> {
                 clean,
                 build_dir,
             )
-            .await?
+                .await?
         }
         BuildActions::Checkout {
             destination,
