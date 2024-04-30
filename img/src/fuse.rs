@@ -222,8 +222,6 @@ impl PartitionFS {
     }
 
     fn read_partition(&mut self, inode: u64, offset: u64, size: u64) -> Result<&[u8]> {
-        dbg!("Reading from {}({})", offset, size);
-
         let e_no_ent = Error::from(std::io::Error::from_raw_os_error(libc::ENOENT));
         let e_inval: Error = Error::from(std::io::Error::from_raw_os_error(libc::EINVAL));
 
@@ -248,7 +246,6 @@ impl PartitionFS {
     }
 
     fn write_partition(&mut self, inode: u64, offset: u64, data: &[u8]) -> Result<usize> {
-        dbg!("Writing to {}({})", offset, data.len());
         let e_no_ent = Error::from(std::io::Error::from_raw_os_error(libc::ENOENT));
         let e_inval: Error = Error::from(std::io::Error::from_raw_os_error(libc::EINVAL));
 
@@ -269,19 +266,6 @@ impl PartitionFS {
 
         Ok(written)
     }
-
-    // fn ioctl_partition(
-    //     &mut self, inode: u64, cmd: u32, in_data: &[u8], out_size: u32,
-    // ) -> Result<(i32, &[u8])> {
-    //     dbg!((inode, cmd, in_data, out_size));
-    //     match cmd {
-    //         // 0x1260 => ,
-    //         cmd => Err(Error::from(std::io::Error::new(
-    //             ErrorKind::InvalidData,
-    //             format!("CMD: {}", cmd),
-    //         ))),
-    //     }
-    // }
 }
 
 const TTL: Duration = Duration::from_secs(1);
@@ -322,7 +306,8 @@ impl Filesystem for PartitionFS {
     fn open(&mut self, _req: &Request<'_>, inode: u64, _flags: i32, reply: ReplyOpen) {
         let fd = self.fd_map.keys().cloned().max().unwrap_or(0) + 1;
 
-        println!("FD: {}", fd);
+        debug!("Opened Partition - FD: {}", fd);
+
         self.fd_map.insert(fd, inode);
 
         reply.opened(0, 0);
@@ -332,7 +317,6 @@ impl Filesystem for PartitionFS {
         &mut self, _req: &Request<'_>, inode: u64, _fh: u64, offset: i64, size: u32, flags: i32,
         lock_owner: Option<u64>, reply: ReplyData,
     ) {
-        println!("READ");
         let data = match self
             .read_partition(inode, offset as u64, size as u64)
             .map_err(Error::into_inner)
@@ -351,7 +335,6 @@ impl Filesystem for PartitionFS {
         &mut self, _req: &Request<'_>, inode: u64, fh: u64, offset: i64, data: &[u8],
         write_flags: u32, flags: i32, lock_owner: Option<u64>, reply: ReplyWrite,
     ) {
-        println!("WRITE");
         let written = match self
             .write_partition(inode, offset as u64, data)
             .map_err(Error::into_inner)
@@ -373,7 +356,6 @@ impl Filesystem for PartitionFS {
             match parent.readdir().map_err(|err| err.into_inner()) {
                 Ok(dir) => {
                     for (offset, dir_item) in dir.enumerate().skip(offset as usize) {
-                        info!("{}({}) + {}", &dir_item.name, &dir_item.inode, offset);
                         if reply.add(
                             dir_item.inode,
                             (offset + 3) as i64,
@@ -398,33 +380,9 @@ impl Filesystem for PartitionFS {
         }
     }
 
-    // fn ioctl(
-    //     &mut self, _req: &Request<'_>, inode: u64, fh: u64, flags: u32, cmd: u32, in_data: &[u8],
-    //     out_size: u32, reply: ReplyIoctl,
-    // ) {
-    //     println!("IOCTL");
-    //     let (result, data) = match self
-    //         .ioctl_partition(inode, cmd, in_data, out_size)
-    //         .map_err(Error::into_inner)
-    //     {
-    //         Ok(len) => len,
-    //         Err(Inner::IoError(io_err)) => {
-    //             return reply.error(io_err.raw_os_error().unwrap_or(libc::EINVAL));
-    //         }
-    //         Err(_) => return reply.error(libc::EINVAL),
-    //     };
-    //
-    //     reply.ioctl(result, data);
-    // }
-
     fn statfs(&mut self, _req: &Request<'_>, inode: u64, reply: ReplyStatfs) {
         debug!("FS STAT: {}", inode);
 
         // reply.statfs();
-    }
-
-    fn access(&mut self, _req: &Request<'_>, inode: u64, mask: i32, reply: ReplyEmpty) {
-        debug!("ACCESS: {}", inode);
-        reply.ok();
     }
 }
