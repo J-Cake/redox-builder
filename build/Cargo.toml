@@ -1,0 +1,18 @@
+[package]
+name = "build"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["qemu"]
+qemu = ["hub/qemu", "img/qemu"]
+
+[dependencies]
+log = "0.4.21"
+serde = "1.0.197"
+toml = "0.8.12"
+async-recursion = "1.1.0"
+rayon = "1.10.0"
+
+hub = { path = "../hub" }
+img = { path = "../img" }
