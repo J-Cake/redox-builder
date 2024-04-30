@@ -1,7 +1,14 @@
+#![feature(async_closure)]
+
+use std::ffi::CString;
+use std::fs;
+use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
+use std::time::Duration;
 
-use async_trait::async_trait;
+use fuser::{BackgroundSession, mount2, MountOption, spawn_mount2};
 use libparted::Constraint;
 use libparted::Disk;
 use libparted::FileSystemType;
@@ -9,35 +16,38 @@ use libparted::Geometry;
 use libparted::Partition;
 use libparted::PartitionTableType;
 use libparted::PartitionType;
-use log::{debug, warn};
-use tokio::net::UnixStream;
-use tokio::process::Command;
+use log::{debug, error, warn};
+use rayon::prelude::*;
+use redoxfs::DiskFile;
 
-use hub::config::{ImageConfig, ImageFormat};
+use hub::config::ImageConfig;
 use hub::error::*;
+use hub::paths::PathManager;
 
+use crate::fuse::PartitionFS;
 #[cfg(feature = "qemu")]
 use crate::qemu::QCow2;
+#[cfg(not(feature = "qemu"))]
 use crate::raw::Raw;
 
+pub mod fuse;
+#[cfg(feature = "qemu")]
 pub mod qemu;
 pub mod raw;
 
-// TODO: Refactor to Traits
+pub type AbortSignal = Receiver<()>;
 
-#[async_trait(? Send)]
 pub trait DiskManager {
     fn backing(&self) -> PathBuf;
     fn image(&self) -> &ImageConfig;
+    fn paths(&self) -> &PathManager;
 
-    async fn create_disk<Backing: AsRef<Path>>(path: Backing, config: Arc<ImageConfig>) -> Result<Self>
+    fn create_disk(config: Arc<ImageConfig>, path: Arc<PathManager>) -> Result<Self>
         where
             Self: Sized;
 
-    async fn mount(&mut self) -> Result<()>;
-    async fn build(&mut self) -> Result<()> {
-        self.mount().await?;
-
+    fn mount(&mut self) -> Result<AbortSignal>;
+    fn build(&mut self) -> Result<()> {
         let mut dev = libparted::Device::new(&self.backing())?;
         dev.open()?;
 
@@ -87,41 +97,88 @@ pub trait DiskManager {
         disk.commit()?;
         Ok(())
     }
-    async fn unmount(&mut self) -> Result<()>;
+    fn unmount(&mut self) -> Result<()>;
 }
 
-async fn get_disk_manager<Backing: AsRef<Path>>(
-    path: Backing,
-    img: Arc<ImageConfig>,
-) -> Result<Box<dyn DiskManager>> {
+fn get_disk_manager(img: Arc<ImageConfig>, path: Arc<PathManager>) -> Result<Box<dyn DiskManager>> {
     #[cfg(feature = "qemu")]
-    return Ok(Box::new(QCow2::create_disk(path, img).await?));
+    return Ok(Box::new(QCow2::create_disk(img, path)?));
 
     #[cfg(not(feature = "qemu"))]
-    return Ok(Box::new(Raw::create_disk(path, img).await?));
+    return Ok(Box::new(Raw::create_disk(path, img)?));
 }
 
 /// This function is responsible for mounting the virtual disk and all its partitions such that each can be written to as if it
-pub async fn prepare_image<Backing: AsRef<Path>>(
-    backing: Backing,
-    config: Arc<ImageConfig>,
+pub fn prepare_image(
+    config: Arc<ImageConfig>, path: Arc<PathManager>,
 ) -> Result<Box<dyn DiskManager>> {
-    tokio::fs::create_dir_all(
-        backing
-            .as_ref()
-            .parent()
-            .unwrap_or(backing.as_ref())
-            .join("partitions"),
-    )
-        .await?;
+    if !path.partitions().exists() {
+        fs::create_dir_all(path.partitions())?;
+    }
 
     // let mut disk = DiskManager::create_disk(backing.as_ref(), config).await?;
-    let mut disk = get_disk_manager(backing, config).await?;
-    if let Err(err) = disk.build().await {
-        disk.unmount().await?;
-        warn!("Failed to build disk. Killing storage daemon");
+    let mut disk = get_disk_manager(Arc::clone(&config), Arc::clone(&path))?;
+    let on_abort = disk.mount()?;
+    if let Err(err) = disk.build() {
+        error!("Failed to build disk. Killing storage daemon");
+        disk.unmount()?;
         return Err(err.into());
     };
+
+    let paths = Arc::clone(&path);
+
+    let pfs = PartitionFS::new(Arc::clone(&paths))?;
+    let opt = &[
+        MountOption::DefaultPermissions,
+        MountOption::FSName("PartitionFS".to_owned()),
+        MountOption::Dev,
+        MountOption::RW,
+    ];
+    if let Err(err) = mount2(pfs, path.partitions(), opt) {
+        error!("Some Stupid Error Message: {:?}", err);
+    }
+
+    // let fuse = spawn_mount2(
+    //     PartitionFS::new(Arc::clone(&paths))?,
+    //     paths.partitions(),
+    //     &[MountOption::AutoUnmount, MountOption::FSName("PartitionFS".to_owned())],
+    // )?;
+    //
+    // std::thread::spawn(move || on_abort.into_iter().next().map(|_| {
+    //     warn!("Abort Signal Received.");
+    //     fuse.join()
+    // }));
+
+    // let _ = config
+    //     .partitions
+    //     .par_iter()
+    //     .map(|partition| -> Result<()> {
+    //         match partition.filesystem.as_ref().map(|i| i.as_str()) {
+    //             Some("redoxfs") => {
+    //                 let partition_blockdev = path.partition(&partition.label).expect(format!(
+    //                     "No blockdev defined for partition '{}'",
+    //                     &partition.label
+    //                 ).as_ref());
+    //                 let disk = DiskFile::open(partition_blockdev)?;
+    //                 let ctime = std::time::SystemTime::now()
+    //                     .duration_since(std::time::UNIX_EPOCH)
+    //                     .unwrap();
+    //
+    //                 redoxfs::FileSystem::create_reserved(disk, None, &[], ctime.as_secs(), ctime.subsec_nanos())?;
+    //
+    //                 Ok(())
+    //             }
+    //             Some("fat32") => {
+    //                 warn!("Fat32: Not Implemented");
+    //                 Ok(())
+    //             }
+    //             Some(fs) => Err(Error::from(BuildError::UnrecognisedFilesystem(
+    //                 fs.to_owned(),
+    //             ))),
+    //             _ => Ok(()),
+    //         }
+    //     })
+    //     .collect::<Result<Vec<_>>>()?;
 
     Ok(disk)
 }

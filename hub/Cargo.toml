@@ -16,3 +16,6 @@ anyhow = "1.0.81"
 crossbeam = "0.8.4"
 clap = "4.5.4"
 backtrace = "0.3.71"
+convert_case = "0.6.0"
+
+redox_syscall = "0.5.1"

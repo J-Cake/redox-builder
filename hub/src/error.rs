@@ -1,3 +1,7 @@
+use std::any::Any;
+
+pub use global::Error;
+
 macro_rules! multi_error {
     ($name:ident($($manual:ident),*); $($err:ident = $obj:ty);*) => {
         pub mod $name {
@@ -17,6 +21,12 @@ macro_rules! multi_error {
             pub struct Error {
                 inner: Inner,
                 backtrace: Backtrace
+            }
+
+            impl Error {
+                pub fn into_inner(self) -> Inner {
+                    self.inner
+                }
             }
 
             impl<Err> From<Err> for Error where Err: Into<Inner> {
@@ -53,26 +63,33 @@ multi_error! { global();
     TomlParseError = toml::de::Error;
     JsonError = serde_json::Error;
     JoinError = tokio::task::JoinError;
-    Anyhow = anyhow::Error
+    Anyhow = anyhow::Error;
+    Syscall = syscall::error::Error
 }
 
 pub type Result<T> = ::std::result::Result<T, global::Error>;
-pub use global::Error;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum BuildError {
     DuplicateComponentName(String),
-    ReferenceDropped, // Happens when the upgrade of a weak pointer fails. Shouldn't ever come up, but handle it anyway
+    ReferenceDropped,
+    // Happens when the upgrade of a weak pointer fails. Shouldn't ever come up, but handle it anyway
     InvalidBuildDir(std::path::PathBuf),
     FailedDependency(String),
     LoopError,
     FailedToCreateImage,
     #[cfg(feature = "qemu")]
-    QmpQuitFail,
+    QmpQuitFail(Box<dyn Any + Send>),
+    #[cfg(feature = "qemu")]
+    QmpQuitWrite0,
     InvalidDiskType,
+    InvalidPartitionName,
+    FuseError(Box<dyn Any + Send>),
+    UnrecognisedFilesystem(String),
 }
 
 impl std::error::Error for BuildError {}
+
 impl std::fmt::Display for BuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(self, f)

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
+
 use hub::error::*;
 
-pub async fn checkout(recipe: String, destination: Option<PathBuf>) -> Result<()> {
+pub fn checkout(_recipe: String, _destination: Option<PathBuf>) -> Result<()> {
     todo!()
 }

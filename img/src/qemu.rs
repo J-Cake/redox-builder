@@ -1,42 +1,122 @@
+use std::fs;
+use std::future::Future;
+use std::io::{Read, Write};
 use std::ops::Deref;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus};
 use std::sync::Arc;
+use std::thread::JoinHandle;
 
 use async_trait::async_trait;
 use log::debug;
-use tokio::net::UnixStream;
-use tokio::process::Command;
 
 use hub::config::{ImageConfig, ImageFormat};
 use hub::error::*;
+use hub::paths::PathManager;
 
-use crate::DiskManager;
+use crate::{AbortSignal, DiskManager};
 
-#[cfg(feature = "qemu")]
-#[derive(Debug)]
 pub struct QCow2 {
     backing: PathBuf,
     image: Arc<ImageConfig>,
-    qmp: Option<UnixStream>,
+    paths: Arc<PathManager>,
+    proc: Option<QemuProc>,
 }
 
-#[cfg(feature = "qemu")]
-impl QCow2 {
-    async fn qmp_send_message(socket: &mut UnixStream, value: serde_json::Value) -> Result<()> {
-        use tokio::io::AsyncWriteExt;
+struct QemuProc {
+    qmp: UnixStream,
+    qemu: JoinHandle<Result<ExitStatus>>,
+    socket_path: PathBuf,
+}
+
+impl QemuProc {
+    pub fn init(qcow2: &mut QCow2) -> Result<(Self, AbortSignal)> {
+        let monitor = qcow2
+            .backing
+            .parent()
+            .unwrap_or(qcow2.backing.as_ref())
+            .join("qemu-monitor.sock");
+
+        let file_driver = format!(
+            "node-name=prot-node,driver=file,filename={}",
+            qcow2.backing.to_string_lossy()
+        );
+        let qcow_driver = format!(
+            "node-name=fmt-node,driver={},file=prot-node",
+            match qcow2.image.format {
+                ImageFormat::Raw => "raw",
+                #[cfg(feature = "qemu")]
+                ImageFormat::QCow2 => "qcow2",
+            }
+        );
+        let qemu_monitor = format!(
+            "socket,path={},id=qemu-monitor",
+            monitor.to_string_lossy()
+        );
+        let fuse_driver = format!(
+            "type=fuse,id=exp0,node-name=fmt-node,mountpoint={},writable=on",
+            qcow2.backing.to_string_lossy()
+        );
+
+        if monitor.exists() {
+            fs::remove_file(&monitor)?;
+        }
+
+        let server = UnixListener::bind(monitor.clone())?;
+        let (mut sender, receiver) = std::sync::mpsc::channel();
+
+        let proc = std::thread::spawn(move || {
+            let exit = Command::new("qemu-storage-daemon")
+                .args(["--blockdev", file_driver.as_ref()])
+                .args(["--blockdev", qcow_driver.as_ref()])
+                .args(["--chardev", qemu_monitor.as_ref()])
+                .args(["--monitor", "chardev=qemu-monitor"])
+                .args(["--export", fuse_driver.as_ref()])
+                .spawn()?
+                .wait()?;
+
+            if !exit.success() { sender.send(()).unwrap_or(()) }
+
+            Ok(exit)
+        });
+
+        let (mut socket, _) = server.accept()?;
 
         let mut vec = vec![0u8; 1024];
+        match socket.read(&mut vec) {
+            Ok(read) if read > 0 => Ok(()),
+            Ok(_) => Err(Error::from(BuildError::QmpQuitWrite0)),
+            Err(err) => Err(err.into()),
+        }?;
 
-        socket.writable().await?;
-        socket
-            .write_all(serde_json::to_string(&value)?.as_bytes())
-            .await?;
+        Self::qmp_send_message(&mut socket, Self::qmp_feature_negotiation())?;
+
+        debug!("Feature Negotiation complete");
+
+        Ok((Self {
+            qmp: socket,
+            qemu: proc,
+            socket_path: monitor.clone(),
+        }, receiver))
+    }
+
+    pub fn kill(mut self) -> Result<ExitStatus> {
+        Self::qmp_send_message(&mut self.qmp, Self::qmp_quit())?;
+        let status = self.qemu.join().map_err(|err| Error::from(BuildError::QmpQuitFail(err)))??;
+        fs::remove_file(self.socket_path)?;
+        return Ok(status);
+    }
+
+    fn qmp_send_message(socket: &mut UnixStream, value: serde_json::Value) -> Result<()> {
+        let mut vec = vec![0u8; 1024];
+
+        socket.write_all(serde_json::to_string(&value)?.as_bytes())?;
 
         loop {
-            socket.readable().await?;
-            match socket.try_read(&mut vec) {
+            match socket.read(&mut vec) {
                 Ok(read) if read > 0 => break,
-                Ok(_) => Err(Error::from(BuildError::QmpQuitFail))?,
+                Ok(_) => Err(Error::from(BuildError::QmpQuitWrite0))?,
                 Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => continue,
                 Err(err) => Err(Error::from(err))?,
             };
@@ -56,7 +136,6 @@ impl QCow2 {
     }
 }
 
-#[cfg(feature = "qemu")]
 #[async_trait(? Send)]
 impl DiskManager for QCow2 {
     fn backing(&self) -> PathBuf {
@@ -66,15 +145,14 @@ impl DiskManager for QCow2 {
     fn image(&self) -> &ImageConfig {
         self.image.deref()
     }
+    fn paths(&self) -> &PathManager {
+        self.paths.deref()
+    }
 
-    #[cfg(feature = "qemu")]
-    async fn create_disk<Backing: AsRef<Path>>(
-        path: Backing,
-        config: Arc<ImageConfig>,
-    ) -> Result<Self> {
-        Command::new("qemu-img")
+    fn create_disk(config: Arc<ImageConfig>, path: Arc<PathManager>) -> Result<Self> {
+        let create = Command::new("qemu-img")
             .arg("create")
-            .arg(path.as_ref())
+            .arg(path.final_image())
             .args([
                 format!("{}M", config.size).as_ref(),
                 "-f",
@@ -85,90 +163,33 @@ impl DiskManager for QCow2 {
                 },
             ])
             .spawn()?
-            .wait()
-            .await?;
+            .wait()?;
 
-        Ok(Self {
-            backing: path.as_ref().to_owned(),
-            qmp: None,
-            image: config,
-        })
+        if create.success() {
+            Ok(Self {
+                backing: path.final_image(),
+                image: config,
+                paths: Arc::clone(&path),
+                proc: None,
+            })
+        } else {
+            Err(Error::from(BuildError::FailedToCreateImage))
+        }
     }
 
-    async fn mount(&mut self) -> Result<()> {
-        let monitor = self
-            .backing
-            .parent()
-            .unwrap_or(self.backing.as_ref())
-            .join("qemu-monitor.sock");
-
-        Command::new("qemu-storage-daemon")
-            .args([
-                "--blockdev",
-                format!(
-                    "node-name=prot-node,driver=file,filename={}",
-                    self.backing.to_string_lossy()
-                )
-                    .as_ref(),
-            ])
-            .args([
-                "--blockdev",
-                format!(
-                    "node-name=fmt-node,driver={},file=prot-node",
-                    match self.image.format {
-                        ImageFormat::Raw => "raw",
-                        #[cfg(feature = "qemu")]
-                        ImageFormat::QCow2 => "qcow2",
-                    }
-                )
-                    .as_ref(),
-            ])
-            .args([
-                "--chardev",
-                format!(
-                    "socket,path={},server=on,wait=off,id=qemu-monitor",
-                    monitor.to_string_lossy()
-                )
-                    .as_ref(),
-            ])
-            .args(["--monitor", "chardev=qemu-monitor"])
-            .args([
-                "--export",
-                format!(
-                    "type=fuse,id=exp0,node-name=fmt-node,mountpoint={},writable=on",
-                    self.backing.to_string_lossy()
-                )
-                    .as_ref(),
-            ])
-            .arg("--daemonize")
-            .spawn()?
-            .wait()
-            .await?;
-
-        let mut socket = UnixStream::connect(monitor).await?;
-        socket.readable().await?;
-
-        let mut vec = vec![0u8; 1024];
-        match socket.try_read(&mut vec) {
-            Ok(read) if read > 0 => Ok(()),
-            Ok(_) => Err(Error::from(BuildError::QmpQuitFail)),
-            Err(err) => Err(err.into()),
-        }?;
-
-        Self::qmp_send_message(&mut socket, Self::qmp_feature_negotiation()).await?;
-
-        self.qmp = Some(socket);
-
+    fn mount(&mut self) -> Result<AbortSignal> {
+        let (proc, abort) = QemuProc::init(self)?;
+        self.proc = Some(proc);
         debug!("Qemu Storage Daemon running");
 
-        Ok(())
+        Ok(abort)
     }
 
-    async fn unmount(&mut self) -> Result<()> {
-        if let Some(socket) = self.qmp.as_mut() {
-            debug!("Killing Storage Daemon");
-            Self::qmp_send_message(socket, Self::qmp_quit()).await?;
-        }
+    fn unmount(&mut self) -> Result<()> {
+        debug!("Killing Storage Daemon");
+        if let Some(proc) = self.proc.take() {
+            proc.kill()?;
+        };
 
         Ok(())
     }

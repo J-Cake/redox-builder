@@ -1,10 +1,11 @@
 use std::env;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+
 use clap::{Parser, Subcommand};
+
 use build::build;
 use checkout::checkout;
-
 use hub::error::*;
 use hub::reporter::*;
 
@@ -44,8 +45,7 @@ pub enum BuildActions {
 
 pub static REPORTER: OnceLock<Reporter> = OnceLock::new();
 
-#[tokio::main]
-pub async fn main() -> Result<()> {
+pub fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
@@ -66,13 +66,12 @@ pub async fn main() -> Result<()> {
                 },
                 clean,
                 build_dir,
-            )
-                .await?
+            )?
         }
         BuildActions::Checkout {
             destination,
             recipe,
-        } => checkout(recipe, destination).await?,
+        } => checkout(recipe, destination)?,
     }
 
     Ok(())

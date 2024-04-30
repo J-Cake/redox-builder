@@ -10,8 +10,13 @@ qemu = []
 [dependencies]
 libparted = { git = "https://github.com/pop-os/libparted.git" }
 log = "0.4.21"
-tokio = "1.37.0"
 serde_json = "1.0.115"
+async-trait = "0.1.79"
+fuser = { version = "0.14.0", features = ["abi-7-31"], default-features = false }
+bufreaderwriter = "0.2.4"
+libc = "0.2.153"
+redoxfs = { git = "https://gitlab.redox-os.org/redox-os/redoxfs.git" }
 
 hub = { path = "../hub" }
-async-trait = "0.1.79"
+rayon = "1.10.0"
+time = "0.3.36"
