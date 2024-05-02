@@ -194,3 +194,9 @@ impl DiskManager for QCow2 {
         Ok(())
     }
 }
+// 
+// impl Drop for QCow2 {
+//     fn drop(&mut self) {
+//         self.unmount().expect("Failed to gracefully unmount")
+//     }
+// }

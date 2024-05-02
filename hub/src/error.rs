@@ -86,6 +86,7 @@ pub enum BuildError {
     InvalidPartitionName,
     FuseError(Box<dyn Any + Send>),
     UnrecognisedFilesystem(String),
+    FailedToCreateFilesystem(String),
 }
 
 impl std::error::Error for BuildError {}

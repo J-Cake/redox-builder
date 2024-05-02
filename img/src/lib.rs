@@ -1,9 +1,8 @@
-#![feature(async_closure)]
-
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
@@ -116,7 +115,14 @@ pub fn prepare_image(
         fs::create_dir_all(path.partitions())?;
     }
 
-    // let mut disk = DiskManager::create_disk(backing.as_ref(), config).await?;
+    for i in config
+        .partitions
+        .iter()
+        .filter_map(|part| path.live_part(&part.label))
+    {
+        fs::create_dir_all(i)?;
+    }
+
     let mut disk = get_disk_manager(Arc::clone(&config), Arc::clone(&path))?;
     let on_abort = disk.mount()?;
     if let Err(err) = disk.build() {
@@ -131,54 +137,62 @@ pub fn prepare_image(
     let opt = &[
         MountOption::DefaultPermissions,
         MountOption::FSName("PartitionFS".to_owned()),
-        MountOption::Dev,
         MountOption::RW,
     ];
-    if let Err(err) = mount2(pfs, path.partitions(), opt) {
-        error!("Some Stupid Error Message: {:?}", err);
-    }
 
-    // let fuse = spawn_mount2(
-    //     PartitionFS::new(Arc::clone(&paths))?,
-    //     paths.partitions(),
-    //     &[MountOption::AutoUnmount, MountOption::FSName("PartitionFS".to_owned())],
-    // )?;
-    //
-    // std::thread::spawn(move || on_abort.into_iter().next().map(|_| {
-    //     warn!("Abort Signal Received.");
-    //     fuse.join()
-    // }));
+    // let fuse = mount2(pfs, path.partitions(), opt)?;
+    let fuse = spawn_mount2(pfs, paths.partitions(), opt)?;
+    std::thread::spawn(move || {
+        on_abort.into_iter().next().map(|_| {
+            warn!("Abort Signal Received.");
+            fuse.join()
+        })
+    });
 
-    // let _ = config
-    //     .partitions
-    //     .par_iter()
-    //     .map(|partition| -> Result<()> {
-    //         match partition.filesystem.as_ref().map(|i| i.as_str()) {
-    //             Some("redoxfs") => {
-    //                 let partition_blockdev = path.partition(&partition.label).expect(format!(
-    //                     "No blockdev defined for partition '{}'",
-    //                     &partition.label
-    //                 ).as_ref());
-    //                 let disk = DiskFile::open(partition_blockdev)?;
-    //                 let ctime = std::time::SystemTime::now()
-    //                     .duration_since(std::time::UNIX_EPOCH)
-    //                     .unwrap();
-    //
-    //                 redoxfs::FileSystem::create_reserved(disk, None, &[], ctime.as_secs(), ctime.subsec_nanos())?;
-    //
-    //                 Ok(())
-    //             }
-    //             Some("fat32") => {
-    //                 warn!("Fat32: Not Implemented");
-    //                 Ok(())
-    //             }
-    //             Some(fs) => Err(Error::from(BuildError::UnrecognisedFilesystem(
-    //                 fs.to_owned(),
-    //             ))),
-    //             _ => Ok(()),
-    //         }
-    //     })
-    //     .collect::<Result<Vec<_>>>()?;
+    let _ = config
+        .partitions
+        .par_iter()
+        .map(|partition| -> Result<()> {
+            let partition_blockdev = path.partition(&partition.label).expect(
+                format!("No blockdev defined for partition '{}'", &partition.label)
+                    .as_ref(),
+            );
+
+            match partition.filesystem.as_ref().map(|i| i.as_str()) {
+                Some("redoxfs") => {
+                    let disk = DiskFile::open(&partition_blockdev)?;
+                    let ctime = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap();
+
+                    redoxfs::FileSystem::create_reserved(
+                        disk,
+                        None,
+                        &[],
+                        ctime.as_secs(),
+                        ctime.subsec_nanos(),
+                    )?;
+
+                    Ok(())
+                }
+                Some("fat32") => {
+                    if Command::new("mkfs.fat")
+                        .arg(partition_blockdev)
+                        .spawn()?
+                        .wait()?
+                        .success() {
+                        Ok(())
+                    } else {
+                        return Err(BuildError::FailedToCreateFilesystem("FAT32".into()).into());
+                    }
+                }
+                Some(fs) => Err(Error::from(BuildError::UnrecognisedFilesystem(
+                    fs.to_owned(),
+                ))),
+                _ => Ok(()),
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(disk)
 }

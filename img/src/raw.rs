@@ -52,3 +52,9 @@ impl DiskManager for Raw {
         todo!()
     }
 }
+
+// impl Drop for Raw {
+//     fn drop(&mut self) {
+//         self.unmount().expect("Failed to gracefully unmount")
+//     }
+// }

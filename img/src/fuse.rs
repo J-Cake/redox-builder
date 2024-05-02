@@ -150,14 +150,14 @@ impl DirItem {
     }
 
     fn get_by_inode(&self, inode: u64) -> Option<&DirItem> {
+        dbg!(format!("get_by_inode: {}", inode));
+
         return if self.inode == inode {
             Some(self)
         } else if let FsNode::Dir(dir) = &self.node {
             dir.iter()
                 .filter_map(|dir_item| dir_item.get_by_inode(inode))
                 .next()
-        } else if let Some(item) = self.get_by_inode(inode) {
-            Some(item)
         } else {
             None
         };
@@ -317,6 +317,7 @@ impl Filesystem for PartitionFS {
         &mut self, _req: &Request<'_>, inode: u64, _fh: u64, offset: i64, size: u32, flags: i32,
         lock_owner: Option<u64>, reply: ReplyData,
     ) {
+        debug!("Read");
         let data = match self
             .read_partition(inode, offset as u64, size as u64)
             .map_err(Error::into_inner)
@@ -335,6 +336,7 @@ impl Filesystem for PartitionFS {
         &mut self, _req: &Request<'_>, inode: u64, fh: u64, offset: i64, data: &[u8],
         write_flags: u32, flags: i32, lock_owner: Option<u64>, reply: ReplyWrite,
     ) {
+        debug!("Write");
         let written = match self
             .write_partition(inode, offset as u64, data)
             .map_err(Error::into_inner)
