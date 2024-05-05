@@ -46,14 +46,13 @@ Unit consistency is a priority. Below is a mapping of data type to units.
 
 ### `::`
 
-| Key               | Type      | Description                                                                                                                                                                                                                                                                                                                                                         |
-|-------------------|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `::name`          | string    | A friendly name for your image. This value is not used during the build process, and serves mainly as a way to identify the image                                                                                                                                                                                                                                   |
-| `::description`   | string    | A longer friendly description of your image's purpose, selling-points etc.                                                                                                                                                                                                                                                                                          |
-| `::requires`      | [string]  | A list of files (optional `.toml` extension) to be included in the image. Each mentioned file is _appended_ to the parent after the parent's content is finished parsing. All keys described in this table are valid here. Any duplicate keys specified within the parent file are treated with a higher precedence, and override values defined in imported files. |
-| `::[[component]]` | Component | A software component converting a list of sources to a list of artifacts. See [`Components`](#component) for more                                                                                                                                                                                                                                                   |
+| Key             | Type     | Description                                                                                                                                                                                                                                                                                                                                                         |
+|-----------------|----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `::name`        | string   | A friendly name for your image. This value is not used during the build process, and serves mainly as a way to identify the image                                                                                                                                                                                                                                   |
+| `::description` | string   | A longer friendly description of your image's purpose, selling-points etc.                                                                                                                                                                                                                                                                                          |
+| `::requires`    | [string] | A list of files (optional `.toml` extension) to be included in the image. Each mentioned file is _appended_ to the parent after the parent's content is finished parsing. All keys described in this table are valid here. Any duplicate keys specified within the parent file are treated with a higher precedence, and override values defined in imported files. |
 
-### `::component`
+### `::[[component]]`
 
 A component is a reproducible set of artifacts which may be referenced throughout the image to place software, blobs or
 files into the final image. They obey a set of caching rules to ensure sources are always up-to-date. This is optional
@@ -71,7 +70,17 @@ are overridden according to the priority rules outlined above.
 | `::[[component]]::shell`    | shell                                                      | A [shell script](#shell) to build the component and produce the artifacts. If an artifact mentioned in  `::[[component]]::yields` cannot be found, the build is considered to have failed. Mutually exclusive to `::[[component]]::cargo` |
 | `::[[component]]::cargo`    | [string]                                                   | Arguments passed to `cargo build`. Mutually exclusive to `::[[component]]::shell`                                                                                                                                                         |
 
-### `::image`
+#### Required functions in `#::shell`
+
+* `main [name: string] -> [path]`
+    - `name`: The name of the component being built
+
+The build system will handle exposing artifacts to other components. Your build script should not be involved in moving
+resources. All your script needs to do is return a list of paths where the build resources can be found. It may be
+relative to `$env.PWD`. Scripts are automatically invoked in the directory allocated to them. You are discouraged from
+changing working directories outside.
+
+### `::[image]`
 
 A description of the disk's layout, including partitions, encryption, format, size etc.
 
@@ -82,7 +91,7 @@ A description of the disk's layout, including partitions, encryption, format, si
 | `::[image]::format`          | `qcow2` \| `raw` (default: `raw`) | Which format the resulting image should contain. The `qcow2` format is feature-gated under `qemu` . While it is a standard feature, you may have to [compile](#Building) this in yourself. |
 | `::[image]::partition_table` | `gpt` \| `mbr` (default: `gpt`)   | Which partition table type to use. It is strongly recommended to use `GPT`                                                                                                                 |
 
-### `::image::partition`
+### `::[image]::[[partition]]`
 
 A large segment on the disk image used to segregate major parts of the image. Often contains a filesystem.
 
@@ -92,23 +101,52 @@ A large segment on the disk image used to segregate major parts of the image. Of
 | `::[image]::[[partition]]::size`       | MiB                   | The size of the partition. If negative, subtracts from the remaining disk size.                                                                                                                                                                                                                             |
 | `::[image]::[[partition]]::requires`   | [component::name]     | The list of components which must be built before the partition can be assembled. Component builds are parallelised where possible, so build-order is not guaranteed.                                                                                                                                       |
 | `::[image]::[[partition]]::filesystem` | filesystem (optional) | Whether the partition should be formatted with a filesystem. If defined, the filesystem will be automatically mounted. If the user does not have superuser access or the `--fuse` argument is provided, the filesystem will be mounted with [`FUSE`](https://en.wikipedia.org/wiki/Filesystem_in_Userspace) |
+| `::[image]::[[partition]]::setup`      | shell                 | A script which is run to initialise the partition. It is not mutually exclusive with `#::filesystem` but should be treated as such, as unexpected things may happen.                                                                                                                                        |
 
-### `::image::partition::file`
+#### Required functions in `#::setup`
+
+* `main [label: string, raw: path, size: filesize]`
+    - `label`: The name of the partition
+    - `raw`: The path to the block device or file representing the partition
+    - `size`: The actual size of the partition. This is not guaranteed to match the size specified in the configuration
+
+### `::[image]::[[partition]]::[[file]]`
 
 A resource which will be written to the filesystem.
 
-| Key                                            | Type       | Description                                                                                |
-|------------------------------------------------|------------|--------------------------------------------------------------------------------------------|
-| `::[image]::[[partition]]::[[file]]::path`     | path       | Where the file is to be placed                                                             |
-| `::[image]::[[partition]]::[[file]]::text`     | string     | The contents of the file. Mutually exclusive to `#::shell`, `#::symlink` and `#::artifact` |
-| `::[image]::[[partition]]::[[file]]::symlink`  | path       | A file to symlink                                                                          |
-| `::[image]::[[partition]]::[[file]]::artifact` | [artifact] | An artifact. Artifacts use the above-described naming convention                           |
-| `::[image]::[[partition]]::[[file]]::shell`    | shell      | A [shell script](#shell). Only the `stdout` of the shell process is written to the file    |
+| Key                                            | Type       | Description                                                                                                                                              |
+|------------------------------------------------|------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `::[image]::[[partition]]::[[file]]::path`     | path       | Where the file is to be placed                                                                                                                           |
+| `::[image]::[[partition]]::[[file]]::text`     | string     | The contents of the file. Mutually exclusive to `#::shell`, `#::symlink` and `#::artifact`                                                               |
+| `::[image]::[[partition]]::[[file]]::symlink`  | path       | A file to symlink. Mutually exclusive to `#::shell`, `#::text` and `#::artifact`                                                                         |
+| `::[image]::[[partition]]::[[file]]::artifact` | [artifact] | An artifact. Artifacts use the above-described naming convention. Mutually exclusive to `#::shell`, `#::symlink` and `#::text`                           |
+| `::[image]::[[partition]]::[[file]]::shell`    | shell      | A [shell script](#shell). Only the `stdout` of the shell process is written to the file. Mutually exclusive to `#::text`, `#::symlink` and `#::artifact` |
 
-## `::filesystem`
+#### Required functions in `#::shell`
 
-| Key | Type | Description |
-|-----|------|-------------|
+* `main [file: path]`
+    - `file`: The path to the file to write to
+
+### `::[[filesystem]]`
+
+| Key                       | Type   | Description                                            |
+|---------------------------|--------|--------------------------------------------------------|
+| `::[[filesystem]]::name`  | string | The string used to indicate this particular filesystem |
+| `::[[filesystem]]::shell` | shell  | A shell script to operate the filesystem               |
+
+#### Required functions in `#::shell`
+
+* `mount [source: path, destination: path]`
+    - `source`: The path of the block device or file containing the unmounted filesystem
+    - `destination`: The path where the filesystem should be mounted to
+* `umount [source: path, destination: path]`
+    - `source`: The path of the block device or file containing the unmounted filesystem
+    - `destination`: The path where the filesystem should be mounted to
+* `stat [source: path] -> { capacity: filesize, free: filesize }`
+    - `source`: The path of the block device or file containing the unmounted filesystem
+    - _return_: Map
+        - `capacity`: The total capacity of the filesystem
+        - `free`: The remaining space within the filesystem
 
 ## Shell
 
@@ -125,13 +163,22 @@ methods which can be called to mount, stat and unmount your filesystem.
 def mount [source: path, dest: path] { sudo -A (kdialog --password "Elevation required to mount custom ext4 filesystem") ext4fuse $source $dest }
 def umount [_source: path, dest: path] { sudo -A (kdialog --password "Elevation requried to unmount filesystem") umount $dest }
 def stat [source: path] { {
-    size: 1024 * 1024 * 1024 * 12 // 12 MiB
+    capacity: 1024 * 1024 * 1024 * 12 // 12 MiB
     free: 1024 * 1024 * 1024 * 4.5 // 4.5 MiB free
     ...
 } | to json }
 ```
 
 The best reference are the [docs themselves](https://www.nushell.sh/book/scripts.html).
+
+### Environment
+
+The following environment variables are set and will always be available
+
+* `$env.dependencies`: The directory containing all emitted artifacts
+* `$env.build_dir`: The topmost directory of the build process. You are highly discouraged from writing outside of this
+  directory.
+* `$env.image`: The path of the final image file
 
 ## Caching
 
