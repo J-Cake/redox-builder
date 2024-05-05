@@ -6,4 +6,4 @@
 /vm-mounts
 /out
 
-/**/*lock*
+*lock*
