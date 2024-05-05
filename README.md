@@ -1,124 +1,163 @@
-# 1. Layout
+# Redox Image Builder
 
-The Image consists of several parts whose structure and function hopefully become clear as the examples become more
-complex. Images are nothing more than files containing bytes which represent the contents of a bootable volume, such as
-a hard drive, USB or CD. A build config's purpose is to describe in as much detail as possible (to allow for
-customisation) how to _build_ such a disk. The build system is opinionated and optimised for building specifically
-various flavours of Redox OS. While it is possible to use this system to build other OS images, your mileage may vary.
+This package is designed to build customised Redox OS images. It offers very powerful mechanisms to build exactly the
+desired image.
 
-From this point on, a physical volume containing an OS will be referred to as a disk. Despite this being a somewhat
-lacking term for it, it's by far the simplest and most well understood.
+## Image Customisation
 
-Most disks are divided into partitions. These are separated contiguous regions of storage with some metadata associated
-to it. Most operations will treat these as completely separate from one-another, and can often even be seen as an
-entirely separate disk. They have varying purposes from storing a user's or a system's files necessary for operation, to
-holding binary instructions on how to boot the OS.
+Creating images involves configurations. These are complete, all-inclusive descriptions of the final image. You have
+complete control over all aspects of the image from included software to boot priority.
 
-## 1.1 EFI
+> Please note that while this
+> system is very flexible, and theoretically can be used to create images of any other OS, this is explicitly
+> out-of-scope. You will notice various Redox-OS specific design decisions throughout the customisation process. This is
+> very intentional.
 
-One of the most important partitions in use is the EFI partition. It is generally very small in comparison to
-data-carrying partitions, as it only contains a simple known structure to describe the methods of booting into an OS.
+Roughly, the configuration process is divided into three "areas". They are
 
-> The term EFI stands for *Extensible Firmware Interface*. It is a standardised set of protocols used to power a
-> computer before and after the control of an operating system. It (among other things) defines how data must be laid
-> out in the EFI partition to bring the computer into a usable state.
->
-> Before (U)EFI, computers used a system called BIOS, which despite its may flaws and virtually non-existent
-> standardisation was the status-quo for a very long time. Most computers still support this mode, but refer to it as
-> *Legacy boot mode* or similar.
->
-> While it is recommended to account for it in older devices, it adds unnecessary complexity in simplified examples such
-> as this. Therefore it will be treated as out-of-scope in favour of (U)EFI.
+| Area              | Purpose                                                                                                                                                     |
+|-------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Disk Image Layout | Defining partition layout, image size, layouts, filesystems, encryption, UEFI parameters, live boot mode etc.                                               |
+| Components        | A list of software which the image is to contain, often referred to as recipes, but due to their very broad application, the term _component_ is preferred. | 
+| Assembly          | How the final image is structured, including standard software, filesystem structure, permissions, customisations, etc.                                     |
 
-## 1.2 Root
+While these don't have direct analogues during the customisation-authoring process, it is often helpful to understand
+this divide.
 
-The Operating System will store its kernel and most crucial configuration information on a partition known as the root
-partition. It is formatted with a filesystem, to allow for addressing and organising files and groups of files, as well
-as their respective access levels. Redox has defined its own format for this, aptly named `redoxfs`.
+Image customisations are written in `TOML` or any markup which compiles to it, although this is left to the user.
+Several [example configurations](./examples/) are provided within this repository.
 
-The root filesystem contains various other pieces of software, drivers, kernels, and in some circumstances also user
-data. Redox typically follows the UNIX structure for organising configuration and programs around the system.
+## Reference
 
-| Directory Name     | Function                                                                                                                                                                                                                                                                                                                              |
-|--------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `/bin`             | Acts as a well-defined place for storing executable binaries. Most commands accessible through your shell are just invocations of these binaries.                                                                                                                                                                                     |
-| `/boot`            | Contains all data necessary for booting the OS                                                                                                                                                                                                                                                                                        |
-| `/dev`             | On Linux and other UNIX-like OSes, holds device files such as graphics cards, disks, displays, network adapters etc. Redox takes a different approach, and instead relies on [schemes](#scheme) to communicate hardware and other soft devices. This folder merely exists for backwards-compatibility with traditional UNIX programs. |
-| `/etc`             | The exact acronym of this folder is an ongoing debate. Many refer to it as _Edit to Configure_ as the primary purpose of this directory is to hold global configuration data of various applications and services. It is often grouped by program here                                                                                |
-| `/filesystem.toml` | This is a copy of the configuration file used to build the OS. This file only exists in images built using the traditional cookbook system.                                                                                                                                                                                           | 
-| `/home`            | User data is stored here. A user will typically have their own dedicated folder where only they have permission to view or edit its contents                                                                                                                                                                                          |
-| `/pkg`             | Contains data that the Redox package manager uses to update the system without requiring a rebuild                                                                                                                                                                                                                                    |
-| `/root`            | This directory serves as the home folder for the root user. It serves the same purpose as folders in `/home`, except specifically for root.                                                                                                                                                                                           |
-| `/tmp`             | The mountpoint for an in-memory filesystem, used to store information programs or users will only use for a short time, then discard. It is generally much faster than writing files to disk, and is erased at reboot or sometimes more often.                                                                                        |
-| `/usr/lib`         | Contains libraries that programs can link to at runtime.                                                                                                                                                                                                                                                                              |  
-| `/usr/share`       | Data that users share with each other. This may be a global index of available software, a list of preinstalled fonts, games or other programs                                                                                                                                                                                        |
+Despite its mission statement, `TOML` can be unintuitive to a human reader. Hence, the table below uses a slightly
+modified notation to make parent-child structures very clear. Keys which belong to a specific table are annotated
+using `::` as found in Rust.
 
-## 2. Booting
+#### Units
 
-_Booting_ refers to the process of bootstrapping the system from a powered-down state to a functional state. In a Redox
-system as well as most UNIX systems, the root filesystem contains the kernel in the form of a binary file located in a
-directory called `/boot`.
+Unit consistency is a priority. Below is a mapping of data type to units.
 
-<details>
-    <summary>The boot process</summary>
+| Data Type                | Unit                                                       |
+|--------------------------|------------------------------------------------------------|
+| File / Blob / Chunk Size | Megabytes (MiB i64) [1024 ** 3 Bytes]                      |
+| Network Transfer Speed   | Megabits per Second (Mb/s f64) [1024 ** 3 bits per second] |
+| Duration                 | Seconds [u64]                                              |
+| Date / Time              | UNIX Timestamp (ms since 01/01/1970 00:00:00.000) [u64]    |
 
-The boot process is often divided into several stages. Broadly the boot process can be described as follows:
+### `::`
 
-1. Firmware Start - The motherboard's electronics trigger a CPU reset, effectively setting it back to fresh state. The
-   UEFI system is loaded from ROM and begins running. It searches for available storage media which may contain the UEFI
-   filesystem where firmware settings, upgrade files, bootloaders and various other things are stored. After a hardware
-   check, UEFI will attempt to locate the bootloader to pass control to and switch to it.
-2. Bootloader - A bootloader is a separate piece of firmware provided by the operating system used to initialise the
-   boot process. Historically, the bootloader was constrained to the first sector of a floppy drive, a measly 512B of
-   storage. It also had to contain a special 4-byte marker to indicate that it was a boot sector. The code required to
-   locate the kernel of the operating system, load it and switch to it had be contained in this sector. Nowadays, UEFI
-   makes this far simpler by foregoing bootloaders entirely - UEFI can load kernels directly.
-3. Kernel start - Once the kernel is loaded, it begins initialising more complex hardware, such as drives, network cards
-   and GPUs. The OS will typically use its own filesystem, so must bring the necessary systems into existence before
-   being able to start any other system processes.
-4. Chief among which is a task-management system responsible for managing services, daemons and various other user-space
-   systems. A task dependency graph is interpreted based on available hardware and user configuration and brings the
-   remaining processes into a functional state. At this point the exact completion of the boot process becomes unclear
-   as services which may continue running into an active session may be necessary for a functional system. An example
-   may be a graphical environment.
+| Key               | Type      | Description                                                                                                                                                                                                                                                                                                                                                         |
+|-------------------|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `::name`          | string    | A friendly name for your image. This value is not used during the build process, and serves mainly as a way to identify the image                                                                                                                                                                                                                                   |
+| `::description`   | string    | A longer friendly description of your image's purpose, selling-points etc.                                                                                                                                                                                                                                                                                          |
+| `::requires`      | [string]  | A list of files (optional `.toml` extension) to be included in the image. Each mentioned file is _appended_ to the parent after the parent's content is finished parsing. All keys described in this table are valid here. Any duplicate keys specified within the parent file are treated with a higher precedence, and override values defined in imported files. |
+| `::[[component]]` | Component | A software component converting a list of sources to a list of artifacts. See [`Components`](#component) for more                                                                                                                                                                                                                                                   |
 
-</details>
+### `::component`
 
-# 2. Configuration
+A component is a reproducible set of artifacts which may be referenced throughout the image to place software, blobs or
+files into the final image. They obey a set of caching rules to ensure sources are always up-to-date. This is optional
+and version-locks can be introduced by altering the source URL.
 
-Throughout this document, the following terms will be used when referring to structures or features within
-configuration:
+You may define as many of these as needed. Note though that each must be uniquely named. Components with duplicate names
+are overridden according to the priority rules outlined above.
 
-| Term         | Definition                                                                              |
-|--------------|-----------------------------------------------------------------------------------------|
-| _Partition_  | A segregated region of the final disk whose contents can be controlled by scripts       |
-| _Image_      | The resulting binary file containing a virtualised hard disk                            |
-| _Job_        | Parallelisable unit of work which produces zero or more artifacts                       |
-| _Artifact_   | A resource (file) with some significance                                                | 
-| _Dependency_ | Tasks which must yield its artifacts to another before it can run                       |
-| _Component_  | A reusable structure of jobs producing an artifact which may be used in the image later |
-| _Script_     | Shellcode used to generate artifacts from input variables                               |
+| Key                         | Type                                                       | Description                                                                                                                                                                                                                               |
+|-----------------------------|------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `::[[component]]::name`     | string                                                     | An identifier used to refer back to the component within the image.                                                                                                                                                                       |
+| `::[[component]]::requires` | [string]                                                   | A list of components or URLs to fetch sources from. Permitted URL types are [documented here](#url-types)                                                                                                                                 |
+| `::[[component]]::yields`   | [string]                                                   | A list of artifacts the component emits. Each can be referred to by concatenating the component's name with `::` and the artifact's name,                                                                                                 |
+| `::[[component]]::caching`  | `aggresive` \| `normal` \| `transient` (default: `normal`) | How artifacts are preserved and reused. See [caching rules](#caching) for more info                                                                                                                                                       |
+| `::[[component]]::shell`    | shell                                                      | A [shell script](#shell) to build the component and produce the artifacts. If an artifact mentioned in  `::[[component]]::yields` cannot be found, the build is considered to have failed. Mutually exclusive to `::[[component]]::cargo` |
+| `::[[component]]::cargo`    | [string]                                                   | Arguments passed to `cargo build`. Mutually exclusive to `::[[component]]::shell`                                                                                                                                                         |
 
-A configuration describes in depth the steps required to produce an image. It is at a high level comparable to a
-makefile in that it describes tasks, their dependencies, their artifacts and how to perform them with a number of
-notable differences: config files use TOML to define build steps for a less free structure.
+### `::image`
 
-## 2.1 Structure
+A description of the disk's layout, including partitions, encryption, format, size etc.
 
-| Table                      | Function                                                                                                                            |
-|----------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
-| `[image]`                  | Provides metadata to the build system                                                                                               |
-| `[[image.partition]]`      | Creates a partition on the image                                                                                                    |
-| `[[image.partition.file]]` | Produces a value which is sent to a handler in the partition                                                                        |
-| `[[component]]`            | Defines a component. The primary advantage is in incremental builds, as components are by their nature unlikely to reuse each-other |
+| Key                          | Type                              | Description                                                                                                                                                                                |
+|------------------------------|-----------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `::[image]::label`           | string                            | A friendly identifier to make the image identifiable to humans or within the image itself.                                                                                                 |
+| `::[image]::size`            | MiB                               | The size of the disk. Error if negative                                                                                                                                                    |
+| `::[image]::format`          | `qcow2` \| `raw` (default: `raw`) | Which format the resulting image should contain. The `qcow2` format is feature-gated under `qemu` . While it is a standard feature, you may have to [compile](#Building) this in yourself. |
+| `::[image]::partition_table` | `gpt` \| `mbr` (default: `gpt`)   | Which partition table type to use. It is strongly recommended to use `GPT`                                                                                                                 |
 
-Any value may be factorised into a separate file and included by placing a relative path into the top-level `requires`
-array.
+### `::image::partition`
 
-## 2.2 Image
+A large segment on the disk image used to segregate major parts of the image. Often contains a filesystem.
 
-## 2.3 Partition
+| Key                                    | Type                  | Description                                                                                                                                                                                                                                                                                                 |
+|----------------------------------------|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `::[image]::[[partition]]::label`      | string                | The name the partition will receive. This can be seen for example when `lsblk <image>`. Must obey the partition naming rules for the partition table type                                                                                                                                                   |
+| `::[image]::[[partition]]::size`       | MiB                   | The size of the partition. If negative, subtracts from the remaining disk size.                                                                                                                                                                                                                             |
+| `::[image]::[[partition]]::requires`   | [component::name]     | The list of components which must be built before the partition can be assembled. Component builds are parallelised where possible, so build-order is not guaranteed.                                                                                                                                       |
+| `::[image]::[[partition]]::filesystem` | filesystem (optional) | Whether the partition should be formatted with a filesystem. If defined, the filesystem will be automatically mounted. If the user does not have superuser access or the `--fuse` argument is provided, the filesystem will be mounted with [`FUSE`](https://en.wikipedia.org/wiki/Filesystem_in_Userspace) |
 
-## 2.4 File
+### `::image::partition::file`
 
-## 2.5 Component
+A resource which will be written to the filesystem.
+
+| Key                                            | Type       | Description                                                                                |
+|------------------------------------------------|------------|--------------------------------------------------------------------------------------------|
+| `::[image]::[[partition]]::[[file]]::path`     | path       | Where the file is to be placed                                                             |
+| `::[image]::[[partition]]::[[file]]::text`     | string     | The contents of the file. Mutually exclusive to `#::shell`, `#::symlink` and `#::artifact` |
+| `::[image]::[[partition]]::[[file]]::symlink`  | path       | A file to symlink                                                                          |
+| `::[image]::[[partition]]::[[file]]::artifact` | [artifact] | An artifact. Artifacts use the above-described naming convention                           |
+| `::[image]::[[partition]]::[[file]]::shell`    | shell      | A [shell script](#shell). Only the `stdout` of the shell process is written to the file    |
+
+## `::filesystem`
+
+| Key | Type | Description |
+|-----|------|-------------|
+
+## Shell
+
+A shell script is any [`NuShell`](https://www.nushell.sh/) script which produces a value. Depending on the requirements
+of the script, you may be required to define a set of functions. NuShell supports function visibility, and you are
+encouraged to encapsulate your functionality as you see fit.
+
+For example, you may wish to use a non-standard filesystem. In this case, you will need to provide a well-known list of
+methods which can be called to mount, stat and unmount your filesystem.
+
+```nu
+// Using [ext4fuse](https://github.com/gerard/ext4fuse.git)
+
+def mount [source: path, dest: path] { sudo -A (kdialog --password "Elevation required to mount custom ext4 filesystem") ext4fuse $source $dest }
+def umount [_source: path, dest: path] { sudo -A (kdialog --password "Elevation requried to unmount filesystem") umount $dest }
+def stat [source: path] { {
+    size: 1024 * 1024 * 1024 * 12 // 12 MiB
+    free: 1024 * 1024 * 1024 * 4.5 // 4.5 MiB free
+    ...
+} | to json }
+```
+
+The best reference are the [docs themselves](https://www.nushell.sh/book/scripts.html).
+
+## Caching
+
+Artifacts (**not components**) are cached based on a caching rule.
+
+| Caching Mode | Purpose                                                                                                                                                                                               |
+|--------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `aggressive` | Cached items persevere as long as possible. These can be cleared by a) explicitly requesting this item's cache be cleared or b) by performing a clean build.                                          |
+| `normal`     | Cached items obey regular preservation rules. Components will re-fetch their sources if no prebuilt or existing build of the component exists.                                                        |
+| `transient`  | This component holds caches for the lifetime of the build only. Component source will be re-fetched at each build. Useful for automatically incrementing version numbers or including CI results etc. |
+
+You can of course explicitly request a component's cache to be invalidated using the `cache` subcommand.
+
+```shell
+$ builder cache remove <component>
+```
+
+Unless the cache mode is `transient`, if a component is specified identically in another configuration and a cache of it
+exists, it will be reused.
+
+## URL Types
+
+The following URL schemes are understood:
+
+* `http` / `https`: Makes a web request.
+* `git`: Fetches a git repository. Accepts commit hashes, branches etc
+* `file`: Uses a file or directory on the local device
+* `art`: Sets a dependency on a component in the current configuration. Must follow the
+  pattern `art://[component]::[artifact]`

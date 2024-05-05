@@ -37,6 +37,22 @@ pub struct ImageConfig {
 
     #[serde(default, rename = "partition")]
     pub partitions: Vec<Partition>,
+
+    #[serde(default, rename = "partition-table")]
+    pub partition_mode: PartitionMode,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PartitionMode {
+    GPT,
+    MBR,
+}
+
+impl Default for PartitionMode {
+    fn default() -> Self {
+        Self::GPT
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -85,11 +101,12 @@ pub struct File {
 pub enum FilesystemEntry {
     Symlink(PathBuf),
     Text(String),
-    Artifact {
-        component: String,
-        artifact: PathBuf,
-    },
-    FromShell(String),
+    // Artifact {
+    //     component: String,
+    //     artifact: PathBuf,
+    // },
+    Artifact(String),
+    Shell(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
