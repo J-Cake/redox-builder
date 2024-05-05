@@ -7,7 +7,7 @@ use hub::config::ImageConfig;
 use hub::error::*;
 use hub::paths::PathManager;
 
-use crate::{AbortSignal, DiskManager};
+use crate::DiskManager;
 
 pub struct Raw {
     backing: PathBuf,
@@ -44,7 +44,7 @@ impl DiskManager for Raw {
         })
     }
 
-    fn mount(&mut self) -> Result<AbortSignal> {
+    fn mount(&mut self) -> Result<()> {
         todo!()
     }
 

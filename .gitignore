@@ -5,3 +5,5 @@
 /.vscode
 /vm-mounts
 /out
+
+/**/*lock*

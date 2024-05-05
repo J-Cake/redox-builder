@@ -64,7 +64,8 @@ multi_error! { global();
     JsonError = serde_json::Error;
     JoinError = tokio::task::JoinError;
     Anyhow = anyhow::Error;
-    Syscall = syscall::error::Error
+    Syscall = syscall::error::Error;
+    NulError = std::ffi::NulError
 }
 
 pub type Result<T> = ::std::result::Result<T, global::Error>;
@@ -87,6 +88,7 @@ pub enum BuildError {
     FuseError(Box<dyn Any + Send>),
     UnrecognisedFilesystem(String),
     FailedToCreateFilesystem(String),
+    NoPartitionMountPoint(String),
 }
 
 impl std::error::Error for BuildError {}

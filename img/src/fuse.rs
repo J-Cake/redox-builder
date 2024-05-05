@@ -150,8 +150,6 @@ impl DirItem {
     }
 
     fn get_by_inode(&self, inode: u64) -> Option<&DirItem> {
-        dbg!(format!("get_by_inode: {}", inode));
-
         return if self.inode == inode {
             Some(self)
         } else if let FsNode::Dir(dir) = &self.node {

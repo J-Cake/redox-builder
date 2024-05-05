@@ -15,7 +15,8 @@ use hub::config::ImageFormat;
 use hub::error::*;
 use hub::paths::PathManager;
 use img::DiskManager;
-use img::prepare_image;
+use img::mnt::mount_filesystems;
+use img::preload_filesystems;
 
 pub struct Context {
     pub disk_mgr: OnceCell<Box<dyn DiskManager>>,
@@ -49,11 +50,23 @@ pub fn mk_context(
     fs::create_dir_all(&build_dir)?;
     info!("Final Build Image: {:?}", &final_image);
 
+    for i in config
+        .image
+        .partitions
+        .iter()
+        .filter_map(|part| path.live_part(&part.label))
+    {
+        fs::create_dir_all(i)?;
+    }
+
     env.insert("BUILD_DIR".to_owned(), build_dir.clone().into_os_string());
     env.insert("IMAGE".to_owned(), final_image.clone().into_os_string());
 
     let mut cell = OnceCell::new();
-    cell.set(prepare_image(Arc::clone(&config.image), Arc::clone(&path))?).map_err(|err| Error::from(BuildError::FailedToCreateImage))?;
+    cell.set(preload_filesystems(Arc::clone(&config.image), Arc::clone(&path))?).map_err(|err| Error::from(BuildError::FailedToCreateImage))?;
+
+    info!("Mounting partitions");
+    mount_filesystems(Arc::clone(&config.image), Arc::clone(&path))?;
 
     Ok(Context {
         disk_mgr: cell,

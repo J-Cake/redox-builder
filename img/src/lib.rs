@@ -1,10 +1,11 @@
 use std::ffi::CString;
 use std::fs;
+use std::fs::File;
 use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::mpsc::Receiver;
+// use std::sync::mpsc::Receiver;
 use std::time::Duration;
 
 use fuser::{BackgroundSession, mount2, MountOption, spawn_mount2};
@@ -15,7 +16,7 @@ use libparted::Geometry;
 use libparted::Partition;
 use libparted::PartitionTableType;
 use libparted::PartitionType;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use rayon::prelude::*;
 use redoxfs::DiskFile;
 
@@ -33,8 +34,9 @@ pub mod fuse;
 #[cfg(feature = "qemu")]
 pub mod qemu;
 pub mod raw;
+pub mod mnt;
 
-pub type AbortSignal = Receiver<()>;
+// pub type AbortSignal = Receiver<()>;
 
 pub trait DiskManager {
     fn backing(&self) -> PathBuf;
@@ -45,7 +47,7 @@ pub trait DiskManager {
         where
             Self: Sized;
 
-    fn mount(&mut self) -> Result<AbortSignal>;
+    fn mount(&mut self) -> Result<()>;
     fn build(&mut self) -> Result<()> {
         let mut dev = libparted::Device::new(&self.backing())?;
         dev.open()?;
@@ -108,23 +110,14 @@ fn get_disk_manager(img: Arc<ImageConfig>, path: Arc<PathManager>) -> Result<Box
 }
 
 /// This function is responsible for mounting the virtual disk and all its partitions such that each can be written to as if it
-pub fn prepare_image(
-    config: Arc<ImageConfig>, path: Arc<PathManager>,
-) -> Result<Box<dyn DiskManager>> {
+/// TODO: This function is currently implemented using FUSE. If the user has superuser access or simply prefers not to, we should use system-level APIs like loopbacks because they're faster.
+pub fn preload_filesystems(config: Arc<ImageConfig>, path: Arc<PathManager>) -> Result<Box<dyn DiskManager>> {
     if !path.partitions().exists() {
         fs::create_dir_all(path.partitions())?;
     }
 
-    for i in config
-        .partitions
-        .iter()
-        .filter_map(|part| path.live_part(&part.label))
-    {
-        fs::create_dir_all(i)?;
-    }
-
     let mut disk = get_disk_manager(Arc::clone(&config), Arc::clone(&path))?;
-    let on_abort = disk.mount()?;
+    disk.mount()?;
     if let Err(err) = disk.build() {
         error!("Failed to build disk. Killing storage daemon");
         disk.unmount()?;
@@ -140,22 +133,14 @@ pub fn prepare_image(
         MountOption::RW,
     ];
 
-    // let fuse = mount2(pfs, path.partitions(), opt)?;
-    let fuse = spawn_mount2(pfs, paths.partitions(), opt)?;
-    std::thread::spawn(move || {
-        on_abort.into_iter().next().map(|_| {
-            warn!("Abort Signal Received.");
-            fuse.join()
-        })
-    });
+    let _fuse = spawn_mount2(pfs, paths.partitions(), opt)?;
 
     let _ = config
         .partitions
         .par_iter()
         .map(|partition| -> Result<()> {
             let partition_blockdev = path.partition(&partition.label).expect(
-                format!("No blockdev defined for partition '{}'", &partition.label)
-                    .as_ref(),
+                format!("No blockdev defined for partition '{}'", &partition.label).as_ref(),
             );
 
             match partition.filesystem.as_ref().map(|i| i.as_str()) {
@@ -180,12 +165,14 @@ pub fn prepare_image(
                         .arg(partition_blockdev)
                         .spawn()?
                         .wait()?
-                        .success() {
+                        .success()
+                    {
                         Ok(())
                     } else {
                         return Err(BuildError::FailedToCreateFilesystem("FAT32".into()).into());
                     }
                 }
+                // TODO: look up user-defined filesystems from parent config
                 Some(fs) => Err(Error::from(BuildError::UnrecognisedFilesystem(
                     fs.to_owned(),
                 ))),

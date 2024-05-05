@@ -15,7 +15,7 @@ use hub::config::{ImageConfig, ImageFormat};
 use hub::error::*;
 use hub::paths::PathManager;
 
-use crate::{AbortSignal, DiskManager};
+use crate::DiskManager;
 
 pub struct QCow2 {
     backing: PathBuf,
@@ -31,7 +31,7 @@ struct QemuProc {
 }
 
 impl QemuProc {
-    pub fn init(qcow2: &mut QCow2) -> Result<(Self, AbortSignal)> {
+    pub fn init(qcow2: &mut QCow2) -> Result<Self> {
         let monitor = qcow2
             .backing
             .parent()
@@ -94,11 +94,11 @@ impl QemuProc {
 
         debug!("Feature Negotiation complete");
 
-        Ok((Self {
+        Ok(Self {
             qmp: socket,
             qemu: proc,
             socket_path: monitor.clone(),
-        }, receiver))
+        })
     }
 
     pub fn kill(mut self) -> Result<ExitStatus> {
@@ -177,12 +177,12 @@ impl DiskManager for QCow2 {
         }
     }
 
-    fn mount(&mut self) -> Result<AbortSignal> {
-        let (proc, abort) = QemuProc::init(self)?;
+    fn mount(&mut self) -> Result<()> {
+        let proc = QemuProc::init(self)?;
         self.proc = Some(proc);
         debug!("Qemu Storage Daemon running");
 
-        Ok(abort)
+        Ok(())
     }
 
     fn unmount(&mut self) -> Result<()> {

@@ -13,6 +13,17 @@ pub struct ConfigFile {
     pub image: Arc<ImageConfig>,
     #[serde(default, rename = "component")]
     pub components: Vec<Component>,
+
+    #[serde(default, rename = "filesystem")]
+    pub filesystems: Vec<Filesystem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Filesystem {
+    create: String,
+    mount: String,
+    unmount: String,
+    get_usage: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

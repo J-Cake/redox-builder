@@ -15,8 +15,10 @@ async-trait = "0.1.79"
 fuser = { version = "0.14.0", features = ["abi-7-31"], default-features = false }
 bufreaderwriter = "0.2.4"
 libc = "0.2.153"
-redoxfs = { git = "https://gitlab.redox-os.org/redox-os/redoxfs.git" }
-
-hub = { path = "../hub" }
 rayon = "1.10.0"
 time = "0.3.36"
+
+redoxfs = { git = "https://gitlab.redox-os.org/redox-os/redoxfs.git" }
+fat32-fuse = { path = "./fat32-fuse" }
+
+hub = { path = "../hub" }
