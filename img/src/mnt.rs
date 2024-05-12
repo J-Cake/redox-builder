@@ -2,6 +2,7 @@ use std::ffi::CString;
 use std::fs::File;
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 
 use log::{debug, info};
@@ -21,7 +22,17 @@ pub fn mount_filesystems(image: Arc<ImageConfig>, path: Arc<PathManager>) -> hub
             match fs.to_lowercase().as_str() {
                 "fat32" => {
                     info!("Mounting FAT32: {:?} => {:?}", &source, &mount);
-                    // TODO: Mount Fat32
+
+                    if let out = Command::new("fusefat")
+                        .args(["-o", "rw+"]) // fusefat is not officially stable and warns strongly against RW as errors might occur. This suppresses the error
+                        .arg(&source)
+                        .arg(&mount)
+                        .spawn()?
+                        .wait_with_output()? {
+                        if !out.status.success() {
+                            return Err(BuildError::FuseError(String::from_utf8(out.stderr)?).into());
+                        }
+                    };
                 }
                 "redoxfs" => {
                     info!("Mounting RedoxFS: {:?} => {:?}", &source, &mount);

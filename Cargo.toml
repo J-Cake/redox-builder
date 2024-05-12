@@ -1,5 +1,5 @@
 [workspace]
-members = ["build", "checkout", "img", "hub", "img/fat32-fuse"]
+members = ["build", "checkout", "img", "hub"]
 
 [package]
 name = "redox-build"

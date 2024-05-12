@@ -127,13 +127,15 @@ pub fn preload_filesystems(config: Arc<ImageConfig>, path: Arc<PathManager>) -> 
     let paths = Arc::clone(&path);
 
     let pfs = PartitionFS::new(Arc::clone(&paths))?;
-    let opt = &[
+    let opt = vec![
         MountOption::DefaultPermissions,
         MountOption::FSName("PartitionFS".to_owned()),
         MountOption::RW,
     ];
 
-    let _fuse = spawn_mount2(pfs, paths.partitions(), opt)?;
+    let mnt = std::thread::spawn(move || mount2(pfs, paths.partitions(), &opt).expect("Failed to mount PartFS"));
+
+    std::thread::sleep(Duration::from_millis(1000));
 
     let _ = config
         .partitions
@@ -180,6 +182,9 @@ pub fn preload_filesystems(config: Arc<ImageConfig>, path: Arc<PathManager>) -> 
             }
         })
         .collect::<Result<Vec<_>>>()?;
+
+    // Hang
+    // mnt.join().expect("Failed to join");
 
     Ok(disk)
 }

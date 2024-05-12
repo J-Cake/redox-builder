@@ -17,7 +17,7 @@ use fuser::Request;
 use fuser::spawn_mount2;
 use libc::c_int;
 use libparted::{Device, Disk, Partition};
-use log::{debug, info};
+use log::{debug, error, info, trace};
 
 use hub::error::*;
 use hub::global::Inner;
@@ -31,7 +31,7 @@ extern "C" {
     fn getegid() -> u32;
 }
 
-const MIN_BLOCK_SIZE: u64 = 4096;
+const MIN_BLOCK_SIZE: u64 = 4096u64.pow(2); // 4096 KiB (4MiB)
 const MAX_BLOCK_SIZE: u64 = MIN_BLOCK_SIZE.pow(2);
 
 /// This filesystem exposes the partitions of a virtual disk to the host system via FUSE.
@@ -236,9 +236,15 @@ impl PartitionFS {
         // TODO: Ensure offset + size doesn't run over the partition's end
         let len = size.min(len * self.sector_size - offset);
         let cap = self.buffer.capacity() as u64;
+        let end = len.min(MAX_BLOCK_SIZE).min(cap) as usize;
+
+        if self.buffer.len() < end {
+            self.buffer.extend(std::iter::repeat(0).take(end - self.buffer.len()));
+        }
+
         let read = self
             .backing
-            .read(&mut self.buffer[0..len.max(MAX_BLOCK_SIZE).max(cap) as usize])?;
+            .read(&mut self.buffer[0..end])?;
 
         Ok(&self.buffer[0..read])
     }
@@ -315,7 +321,6 @@ impl Filesystem for PartitionFS {
         &mut self, _req: &Request<'_>, inode: u64, _fh: u64, offset: i64, size: u32, flags: i32,
         lock_owner: Option<u64>, reply: ReplyData,
     ) {
-        debug!("Read");
         let data = match self
             .read_partition(inode, offset as u64, size as u64)
             .map_err(Error::into_inner)
@@ -334,7 +339,6 @@ impl Filesystem for PartitionFS {
         &mut self, _req: &Request<'_>, inode: u64, fh: u64, offset: i64, data: &[u8],
         write_flags: u32, flags: i32, lock_owner: Option<u64>, reply: ReplyWrite,
     ) {
-        debug!("Write");
         let written = match self
             .write_partition(inode, offset as u64, data)
             .map_err(Error::into_inner)
@@ -347,6 +351,10 @@ impl Filesystem for PartitionFS {
         };
 
         reply.written(written as u32);
+    }
+
+    fn flush(&mut self, _req: &Request<'_>, ino: u64, fh: u64, lock_owner: u64, reply: ReplyEmpty) {
+        reply.ok();
     }
 
     fn readdir(
@@ -378,11 +386,5 @@ impl Filesystem for PartitionFS {
         } else {
             reply.error(libc::ENOENT);
         }
-    }
-
-    fn statfs(&mut self, _req: &Request<'_>, inode: u64, reply: ReplyStatfs) {
-        debug!("FS STAT: {}", inode);
-
-        // reply.statfs();
     }
 }

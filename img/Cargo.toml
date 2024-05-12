@@ -19,6 +19,5 @@ rayon = "1.10.0"
 time = "0.3.36"
 
 redoxfs = { git = "https://gitlab.redox-os.org/redox-os/redoxfs.git" }
-fat32-fuse = { path = "./fat32-fuse" }
 
 hub = { path = "../hub" }

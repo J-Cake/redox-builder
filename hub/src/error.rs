@@ -65,7 +65,8 @@ multi_error! { global();
     JoinError = tokio::task::JoinError;
     Anyhow = anyhow::Error;
     Syscall = syscall::error::Error;
-    NulError = std::ffi::NulError
+    NulError = std::ffi::NulError;
+    Utf8Error = std::string::FromUtf8Error
 }
 
 pub type Result<T> = ::std::result::Result<T, global::Error>;
@@ -85,7 +86,8 @@ pub enum BuildError {
     QmpQuitWrite0,
     InvalidDiskType,
     InvalidPartitionName,
-    FuseError(Box<dyn Any + Send>),
+    // FuseError(Box<dyn Any + Send>),
+    FuseError(String),
     UnrecognisedFilesystem(String),
     FailedToCreateFilesystem(String),
     NoPartitionMountPoint(String),
